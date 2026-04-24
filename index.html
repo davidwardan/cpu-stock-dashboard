@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A minimal CPU stock dashboard for tracking chip designers, foundries, memory, and semiconductor equipment."
+    />
+    <title>CPU Stock Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="shell masthead">
+      <div>
+        <p class="kicker">Silicon tape</p>
+        <h1>CPU stock dashboard</h1>
+      </div>
+      <div class="statusbar" aria-live="polite">
+        <span id="dataStatus">Preparing market feed</span>
+        <button id="refreshButton" class="text-button" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main class="shell layout">
+      <section class="metric-grid" aria-label="Dashboard overview">
+        <article class="metric">
+          <span class="label">Universe</span>
+          <strong id="universeCount">12</strong>
+          <span>CPU-adjacent equities</span>
+        </article>
+        <article class="metric">
+          <span class="label">Median move</span>
+          <strong id="medianMove">--</strong>
+          <span>Latest session</span>
+        </article>
+        <article class="metric">
+          <span class="label">Leadership</span>
+          <strong id="leaderTicker">--</strong>
+          <span id="leaderDetail">Waiting for quotes</span>
+        </article>
+        <article class="metric">
+          <span class="label">Risk tone</span>
+          <strong id="riskTone">--</strong>
+          <span id="riskDetail">Based on realized volatility</span>
+        </article>
+      </section>
+
+      <section class="toolbar" aria-label="Filters">
+        <div class="segments" id="segmentFilters">
+          <button class="active" type="button" data-filter="all">All</button>
+          <button type="button" data-filter="Design">Design</button>
+          <button type="button" data-filter="Foundry">Foundry</button>
+          <button type="button" data-filter="Memory">Memory</button>
+          <button type="button" data-filter="Equipment">Equipment</button>
+        </div>
+        <label class="search">
+          <span>Search</span>
+          <input id="searchInput" type="search" placeholder="Ticker or company" autocomplete="off" />
+        </label>
+      </section>
+
+      <section class="split">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="kicker">Ranked tape</p>
+              <h2>CPU complex</h2>
+            </div>
+            <button id="sortButton" class="text-button" type="button">Sort: move</button>
+          </div>
+          <div id="stockList" class="stock-list" aria-live="polite"></div>
+        </div>
+
+        <aside class="panel signal-panel">
+          <div class="panel-head">
+            <div>
+              <p class="kicker">Signal map</p>
+              <h2>Momentum / risk</h2>
+            </div>
+          </div>
+          <canvas id="signalCanvas" width="720" height="520" aria-label="Momentum and volatility scatter plot"></canvas>
+          <div id="selectedStock" class="selected-stock"></div>
+        </aside>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Portfolio lens</p>
+            <h2>Equal-weight silicon pulse</h2>
+          </div>
+          <span id="pulseSummary" class="quiet">Waiting for history</span>
+        </div>
+        <div id="pulseStrip" class="pulse-strip" aria-label="Recent equal-weight daily return strip"></div>
+      </section>
+
+      <section class="panel notes-panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Local desk</p>
+            <h2>Thesis notes</h2>
+          </div>
+          <span class="quiet">Saved only in this browser</span>
+        </div>
+        <div class="notes-grid">
+          <label>
+            Watch focus
+            <select id="noteTicker"></select>
+          </label>
+          <label>
+            Thesis
+            <textarea id="noteText" rows="5" placeholder="Example: Watch data center margin comments after earnings."></textarea>
+          </label>
+          <label>
+            Alert level
+            <input id="alertLevel" type="number" min="0" step="0.01" placeholder="Optional price" />
+          </label>
+        </div>
+      </section>
+    </main>
+
+    <footer class="shell footer">
+      <span>Quotes via Stooq when available. Fallback data keeps the interface usable offline.</span>
+      <span>Not financial advice.</span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
