@@ -13,6 +13,4 @@ A zero-backend, zero-cost dashboard for tracking CPU-related stocks across chip 
 
 ## Free Deployment
 
-This project is static: `index.html`, `styles.css`, and `app.js`. It can be hosted for free on GitHub Pages.
-
-The included GitHub Actions workflow publishes the site automatically from `main`.
+This project is static: `index.html`, `styles.css`, and `app.js`. It is hosted for free on GitHub Pages from the `gh-pages` branch.
