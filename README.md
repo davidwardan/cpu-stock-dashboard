@@ -8,6 +8,8 @@ A zero-backend, zero-cost dashboard for tracking CPU-related stocks across chip 
 - Offline fallback tape so the interface still works without a market feed
 - Swiss-style ranked equity tape with sparklines
 - Non-overlapping silicon floorplan with momentum rails, risk bands, and signal labels
+- Proper selected-stock daily close time series from StockAnalysis table data, with axes, date labels, moving average, and latest marker
+- Quote timestamp and estimated delay from the latest returned exchange timestamp
 - Equal-weight silicon pulse plus segment cards for design, foundry, memory, and equipment
 - Browser-local thesis notes and optional alert levels
 

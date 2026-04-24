@@ -85,6 +85,18 @@
         </aside>
       </section>
 
+      <section class="panel chart-panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Real daily history</p>
+            <h2 id="chartTitle">Selected stock</h2>
+          </div>
+          <span id="delayStatus" class="quiet feed-delay">Waiting for quote timestamp</span>
+        </div>
+        <div id="priceChart" class="price-chart" aria-live="polite"></div>
+        <div id="chartStats" class="chart-stats" aria-label="Selected stock chart statistics"></div>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -123,7 +135,7 @@
     </main>
 
     <footer class="shell footer">
-      <span>Quotes via Stooq when available. Fallback data keeps the interface usable offline.</span>
+      <span id="feedFootnote">Quotes via Stooq when available. Fallback data keeps the interface usable offline.</span>
       <span>Not financial advice.</span>
     </footer>
 

@@ -34,6 +34,13 @@ const state = {
   filter: 'all',
   query: '',
   sort: 'move',
+  feed: {
+    mode: 'loading',
+    latestTimestamp: null,
+    delayMinutes: null,
+  },
+  chartHistories: new Map(),
+  chartHistoryStatus: new Map(),
   notes: JSON.parse(localStorage.getItem('cpu-dashboard-notes') || '{}'),
 };
 
@@ -46,6 +53,10 @@ const els = {
   sortButton: document.querySelector('#sortButton'),
   signalBoard: document.querySelector('#signalBoard'),
   selectedStock: document.querySelector('#selectedStock'),
+  chartTitle: document.querySelector('#chartTitle'),
+  delayStatus: document.querySelector('#delayStatus'),
+  priceChart: document.querySelector('#priceChart'),
+  chartStats: document.querySelector('#chartStats'),
   medianMove: document.querySelector('#medianMove'),
   leaderTicker: document.querySelector('#leaderTicker'),
   leaderDetail: document.querySelector('#leaderDetail'),
@@ -58,10 +69,21 @@ const els = {
   noteTicker: document.querySelector('#noteTicker'),
   noteText: document.querySelector('#noteText'),
   alertLevel: document.querySelector('#alertLevel'),
+  feedFootnote: document.querySelector('#feedFootnote'),
 };
 
 const quoteUrl = `https://stooq.com/q/l/?s=${STOCKS.map((stock) => stock.stooq).join('+')}&f=sd2t2ohlcv&h&e=csv`;
 const historyUrl = (symbol) => `https://stooq.com/q/d/l/?s=${symbol}&i=d`;
+const stockAnalysisUrl = (ticker) =>
+  `https://stockanalysis.com/stocks/${ticker.toLowerCase()}/history/`;
+const stockAnalysisMirrors = (ticker) => {
+  const target = stockAnalysisUrl(ticker);
+  return [
+    `https://corsproxy.io/?url=${encodeURIComponent(target)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
+    `https://r.jina.ai/${target}`,
+  ];
+};
 const corsMirrors = (url) => [
   url,
   `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -77,6 +99,11 @@ function pct(value) {
 function money(value) {
   if (!Number.isFinite(value)) return '--';
   return `$${value.toFixed(value > 100 ? 2 : 2)}`;
+}
+
+function compactNumber(value) {
+  if (!Number.isFinite(value)) return '--';
+  return Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
 
 function clamp(value, min, max) {
@@ -99,6 +126,115 @@ function parseCsv(text) {
     .filter(Boolean);
 }
 
+function normalizeStooqDate(value) {
+  if (!value) return '';
+  if (/^\d{8}$/.test(value)) return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}`;
+  return value.replace(/\./g, '-');
+}
+
+function parseQuoteTimestamp(date, time) {
+  const normalizedDate = normalizeStooqDate(date);
+  if (!normalizedDate || !time || time.toLowerCase() === 'n/d') return null;
+  const parsed = new Date(`${normalizedDate}T${time}${stooqTimezoneOffset(normalizedDate)}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function stooqTimezoneOffset(date) {
+  const month = Number(date.slice(5, 7));
+  return month >= 4 && month <= 10 ? '+02:00' : '+01:00';
+}
+
+function formatDateTime(timestamp) {
+  if (!timestamp) return 'timestamp unavailable';
+  return timestamp.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatChartDate(date) {
+  const normalizedDate = normalizeStooqDate(date);
+  const parsed = new Date(`${normalizedDate}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function formatDelay(minutes) {
+  if (!Number.isFinite(minutes)) return 'unknown delay';
+  if (minutes < 1) return 'under 1 min';
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours < 24) return mins ? `${hours}h ${mins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+function feedFromQuotes(quotes) {
+  const timestamps = [...quotes.values()]
+    .map((quote) => quote.timestamp)
+    .filter(Boolean)
+    .map((timestamp) => timestamp.getTime());
+  if (!timestamps.length) {
+    return { mode: 'live', latestTimestamp: null, delayMinutes: null };
+  }
+  const latestTimestamp = new Date(Math.max(...timestamps));
+  const delayMinutes = Math.max(0, Math.round((Date.now() - latestTimestamp.getTime()) / 60000));
+  return { mode: 'live', latestTimestamp, delayMinutes };
+}
+
+function feedDelayCopy() {
+  if (state.feed.mode === 'fallback') {
+    return 'Live feed unavailable; showing offline fallback data.';
+  }
+  if (!state.feed.latestTimestamp) {
+    return 'Free delayed feed; quote timestamp unavailable.';
+  }
+  return `Quote stamp ${formatDateTime(state.feed.latestTimestamp)}; about ${formatDelay(
+    state.feed.delayMinutes,
+  )} behind your clock.`;
+}
+
+function parseReadableDate(value) {
+  const parsed = new Date(`${value} 12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseNumber(value) {
+  const number = Number(String(value).replace(/[$,%,-]/g, '').replace(/,/g, ''));
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeHistoryRows(rows) {
+  return rows
+    .map((cells) => ({
+      date: parseReadableDate(cells[0]),
+      close: parseNumber(cells[4]),
+      volume: parseNumber(cells[7]),
+    }))
+    .filter((row) => Number.isFinite(row.close))
+    .reverse()
+    .slice(-90);
+}
+
+function parseStockAnalysisHistory(text) {
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  const tableRows = [...doc.querySelectorAll('table tbody tr')]
+    .map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent.trim()))
+    .filter((cells) => cells.length >= 8);
+  if (tableRows.length) return normalizeHistoryRows(tableRows);
+
+  const markdownRows = text
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('| ') && !line.includes('---') && !line.includes('| Date |'))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+  return normalizeHistoryRows(markdownRows);
+}
+
 function fallbackHistory(ticker) {
   const base = FALLBACK_QUOTES[ticker].close;
   let price = base / 1.14;
@@ -118,7 +254,17 @@ async function fetchQuotes() {
       const close = Number(record.close);
       const open = Number(record.open);
       const changePct = open ? ((close - open) / open) * 100 : 0;
-      return [ticker, { close, changePct, volume: Number(record.volume), time: record.time }];
+      return [
+        ticker,
+        {
+          close,
+          changePct,
+          volume: Number(record.volume),
+          date: record.date,
+          time: record.time,
+          timestamp: parseQuoteTimestamp(record.date, record.time),
+        },
+      ];
     }),
   );
 }
@@ -130,6 +276,45 @@ async function fetchHistory(stock) {
     .filter((row) => Number.isFinite(row.close))
     .slice(-90);
   return history.length > 10 ? history : fallbackHistory(stock.ticker);
+}
+
+async function fetchStockAnalysisHistory(stock) {
+  const errors = [];
+  for (const url of stockAnalysisMirrors(stock.ticker)) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 6500);
+    try {
+      const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
+      if (!response.ok) throw new Error(`StockAnalysis history returned ${response.status}`);
+      const rows = parseStockAnalysisHistory(await response.text());
+      if (rows.length < 10) throw new Error('StockAnalysis history returned too little data');
+      return rows;
+    } catch (error) {
+      errors.push(error.message);
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+  throw new Error(errors.join('; '));
+}
+
+function isFallbackHistory(history) {
+  return history.some((point) => String(point.date).startsWith('Fallback'));
+}
+
+function ensureChartHistory(row) {
+  if (!row || state.chartHistories.has(row.ticker) || state.chartHistoryStatus.get(row.ticker) === 'loading') return;
+  state.chartHistoryStatus.set(row.ticker, 'loading');
+  fetchStockAnalysisHistory(row)
+    .then((history) => {
+      state.chartHistories.set(row.ticker, history);
+      state.chartHistoryStatus.set(row.ticker, 'ready');
+      if (state.selected === row.ticker) renderPriceChart();
+    })
+    .catch(() => {
+      state.chartHistoryStatus.set(row.ticker, 'failed');
+      if (state.selected === row.ticker) renderPriceChart();
+    });
 }
 
 async function fetchText(url) {
@@ -171,6 +356,10 @@ function enrich(stock, quote, history) {
     close: latest,
     changePct: quote?.changePct ?? FALLBACK_QUOTES[stock.ticker].changePct,
     volume: quote?.volume,
+    quoteTimestamp: quote?.timestamp || null,
+    quoteDate: quote?.date,
+    quoteTime: quote?.time,
+    historyLatest,
     history,
     momentum,
     volatility,
@@ -185,12 +374,14 @@ async function loadData() {
       fetchQuotes(),
       Promise.all(STOCKS.map((stock) => fetchHistory(stock).catch(() => fallbackHistory(stock.ticker)))),
     ]);
+    state.feed = feedFromQuotes(quotes);
     state.rows = STOCKS.map((stock, index) => enrich(stock, quotes.get(stock.ticker), histories[index]));
     els.dataStatus.textContent = `Live feed updated ${new Date().toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     })}`;
   } catch (error) {
+    state.feed = { mode: 'fallback', latestTimestamp: null, delayMinutes: null };
     state.rows = STOCKS.map((stock) => enrich(stock, FALLBACK_QUOTES[stock.ticker], fallbackHistory(stock.ticker)));
     els.dataStatus.textContent = 'Live feed unavailable; using fallback tape';
   } finally {
@@ -403,6 +594,120 @@ function renderSelected() {
   `;
 }
 
+function renderPriceChart() {
+  const row = state.rows.find((item) => item.ticker === state.selected) || state.rows[0];
+  if (!row) {
+    els.priceChart.innerHTML = '<p class="empty-state">Waiting for price history.</p>';
+    els.chartStats.innerHTML = '';
+    return;
+  }
+  ensureChartHistory(row);
+  const status = state.chartHistoryStatus.get(row.ticker);
+  const realHistory = state.chartHistories.get(row.ticker);
+  const usingFallback = !realHistory && isFallbackHistory(row.history);
+  const data = (realHistory || row.history).filter((point) => Number.isFinite(point.close)).slice(-90);
+  if (usingFallback && status !== 'failed') {
+    els.chartTitle.textContent = `${row.ticker} daily close`;
+    els.priceChart.innerHTML = `<p class="empty-state">Loading real daily close history for ${row.ticker}.</p>`;
+    els.chartStats.innerHTML = `
+      <div><span>Chart source</span><strong>Loading</strong></div>
+      <div><span>Quote</span><strong>${money(row.close)}</strong></div>
+      <div><span>Feed delay</span><strong>${formatDelay(state.feed.delayMinutes)}</strong></div>
+      <div><span>Volume</span><strong>${compactNumber(row.volume)}</strong></div>
+    `;
+    return;
+  }
+  if (data.length < 2) {
+    els.priceChart.innerHTML = '<p class="empty-state">Not enough history for a time-series chart.</p>';
+    els.chartStats.innerHTML = '';
+    return;
+  }
+
+  const width = 960;
+  const height = 360;
+  const pad = { top: 26, right: 76, bottom: 52, left: 72 };
+  const innerWidth = width - pad.left - pad.right;
+  const innerHeight = height - pad.top - pad.bottom;
+  const closes = data.map((point) => point.close);
+  const minClose = Math.min(...closes);
+  const maxClose = Math.max(...closes);
+  const yPad = Math.max((maxClose - minClose) * 0.12, maxClose * 0.012, 1);
+  const yMin = minClose - yPad;
+  const yMax = maxClose + yPad;
+  const xFor = (index) => pad.left + (index / Math.max(data.length - 1, 1)) * innerWidth;
+  const yFor = (value) => pad.top + (1 - (value - yMin) / (yMax - yMin || 1)) * innerHeight;
+  const pricePath = data
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${xFor(index).toFixed(2)} ${yFor(point.close).toFixed(2)}`)
+    .join(' ');
+  const areaPath = `${pricePath} L ${xFor(data.length - 1).toFixed(2)} ${pad.top + innerHeight} L ${pad.left} ${
+    pad.top + innerHeight
+  } Z`;
+  const movingAverage = data.map((point, index) => {
+    const window = data.slice(Math.max(0, index - 19), index + 1);
+    return window.reduce((sum, item) => sum + item.close, 0) / window.length;
+  });
+  const movingAveragePath = movingAverage
+    .map((value, index) => `${index === 0 ? 'M' : 'L'} ${xFor(index).toFixed(2)} ${yFor(value).toFixed(2)}`)
+    .join(' ');
+  const yTicks = Array.from({ length: 5 }, (_, index) => yMin + ((yMax - yMin) / 4) * index).reverse();
+  const xTickIndexes = [0, Math.floor((data.length - 1) / 2), data.length - 1];
+  const lastPoint = data.at(-1);
+  const firstPoint = data[0];
+  const chartChange = ((lastPoint.close - firstPoint.close) / firstPoint.close) * 100;
+  const tone = chartChange >= 0 ? 'up' : 'down';
+  const chartSource = realHistory ? 'StockAnalysis table' : isFallbackHistory(data) ? 'Offline fallback' : 'Stooq daily CSV';
+  const titleMode = chartSource === 'Offline fallback' ? 'fallback' : 'real';
+
+  els.chartTitle.textContent = `${row.ticker} ${titleMode} ${data.length}-session close`;
+  els.priceChart.innerHTML = `
+    <svg class="time-series" viewBox="0 0 ${width} ${height}" role="img" aria-label="${row.ticker} daily close time series">
+      <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
+      ${yTicks
+        .map(
+          (tick) => `
+            <g class="chart-grid">
+              <line x1="${pad.left}" y1="${yFor(tick).toFixed(2)}" x2="${width - pad.right}" y2="${yFor(tick).toFixed(
+            2,
+          )}"></line>
+              <text x="${width - pad.right + 14}" y="${(yFor(tick) + 4).toFixed(2)}">${money(tick)}</text>
+            </g>
+          `,
+        )
+        .join('')}
+      ${xTickIndexes
+        .map(
+          (index) => `
+            <text class="chart-x-label" x="${xFor(index).toFixed(2)}" y="${height - 18}" text-anchor="${
+            index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'
+          }">${formatChartDate(data[index].date)}</text>
+          `,
+        )
+        .join('')}
+      <path class="chart-area" d="${areaPath}"></path>
+      <path class="chart-ma" d="${movingAveragePath}"></path>
+      <path class="chart-line" d="${pricePath}"></path>
+      <circle class="chart-last-dot" cx="${xFor(data.length - 1).toFixed(2)}" cy="${yFor(lastPoint.close).toFixed(
+    2,
+  )}" r="7"></circle>
+      <text class="chart-last-label" x="${(xFor(data.length - 1) - 12).toFixed(2)}" y="${(yFor(lastPoint.close) - 14).toFixed(
+    2,
+  )}" text-anchor="end">${money(lastPoint.close)}</text>
+    </svg>
+  `;
+  els.chartStats.innerHTML = `
+    <div><span>Chart source</span><strong>${chartSource}</strong></div>
+    <div><span>Chart range</span><strong>${formatChartDate(firstPoint.date)} - ${formatChartDate(lastPoint.date)}</strong></div>
+    <div><span>${data.length}-session move</span><strong class="${tone}">${pct(chartChange)}</strong></div>
+    <div><span>Quote delay</span><strong>${formatDelay(state.feed.delayMinutes)}</strong></div>
+  `;
+}
+
+function renderFeedStatus() {
+  const delayCopy = feedDelayCopy();
+  els.delayStatus.textContent = delayCopy;
+  els.feedFootnote.textContent = `${delayCopy} Free quotes are delayed; use a broker feed for execution-grade real time.`;
+}
+
 function renderPulse() {
   if (!state.rows.length) return;
   const length = Math.min(...state.rows.map((row) => row.history.length));
@@ -488,6 +793,8 @@ function render() {
   renderStockList();
   renderSignalBoard();
   renderSelected();
+  renderPriceChart();
+  renderFeedStatus();
   renderPulse();
 }
 

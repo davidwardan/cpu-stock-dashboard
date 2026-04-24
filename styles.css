@@ -546,6 +546,98 @@ input[type='number'] {
   background: var(--amber);
 }
 
+.chart-panel {
+  box-shadow: var(--shadow);
+}
+
+.feed-delay {
+  max-width: 460px;
+  text-align: right;
+}
+
+.price-chart {
+  padding: 12px 18px 0;
+}
+
+.time-series {
+  display: block;
+  width: 100%;
+  min-height: 300px;
+}
+
+.chart-grid line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart-grid text,
+.chart-x-label,
+.chart-last-label {
+  fill: var(--muted);
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 13px;
+}
+
+.chart-area {
+  fill: rgba(27, 92, 255, 0.07);
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.chart-ma {
+  fill: none;
+  stroke: var(--blue);
+  stroke-dasharray: 7 8;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.chart-last-dot {
+  fill: var(--panel);
+  stroke: var(--blue);
+  stroke-width: 4;
+}
+
+.chart-last-label {
+  fill: var(--ink);
+  font-weight: 700;
+}
+
+.chart-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  border-top: 1px solid var(--line);
+  background: var(--line);
+}
+
+.chart-stats div {
+  min-height: 88px;
+  background: var(--panel);
+  padding: 16px 18px;
+}
+
+.chart-stats span {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.chart-stats strong {
+  overflow-wrap: anywhere;
+  font-size: clamp(18px, 2.4vw, 28px);
+  line-height: 1;
+}
+
 .pulse-strip {
   display: grid;
   grid-template-columns: repeat(60, 1fr);
@@ -711,6 +803,19 @@ textarea {
 
   .pulse-strip {
     grid-template-columns: repeat(20, 1fr);
+  }
+
+  .feed-delay {
+    max-width: none;
+    text-align: left;
+  }
+
+  .price-chart {
+    padding: 6px 8px 0;
+  }
+
+  .chart-stats {
+    grid-template-columns: 1fr 1fr;
   }
 
   .signal-lane {
