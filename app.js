@@ -44,7 +44,7 @@ const els = {
   segmentFilters: document.querySelector('#segmentFilters'),
   searchInput: document.querySelector('#searchInput'),
   sortButton: document.querySelector('#sortButton'),
-  canvas: document.querySelector('#signalCanvas'),
+  signalBoard: document.querySelector('#signalBoard'),
   selectedStock: document.querySelector('#selectedStock'),
   medianMove: document.querySelector('#medianMove'),
   leaderTicker: document.querySelector('#leaderTicker'),
@@ -53,6 +53,7 @@ const els = {
   riskDetail: document.querySelector('#riskDetail'),
   universeCount: document.querySelector('#universeCount'),
   pulseStrip: document.querySelector('#pulseStrip'),
+  groupPulse: document.querySelector('#groupPulse'),
   pulseSummary: document.querySelector('#pulseSummary'),
   noteTicker: document.querySelector('#noteTicker'),
   noteText: document.querySelector('#noteText'),
@@ -76,6 +77,15 @@ function pct(value) {
 function money(value) {
   if (!Number.isFinite(value)) return '--';
   return `$${value.toFixed(value > 100 ? 2 : 2)}`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function scale(value, min, max, low = 0, high = 100) {
+  if (!Number.isFinite(value) || max === min) return (low + high) / 2;
+  return low + ((value - min) / (max - min)) * (high - low);
 }
 
 function parseCsv(text) {
@@ -146,10 +156,11 @@ async function fetchText(url) {
 
 function enrich(stock, quote, history) {
   const closes = history.map((point) => point.close);
-  const latest = quote?.close || closes.at(-1) || FALLBACK_QUOTES[stock.ticker].close;
+  const historyLatest = closes.at(-1) || FALLBACK_QUOTES[stock.ticker].close;
+  const latest = quote?.close || historyLatest;
   const returns = closes.slice(1).map((close, index) => ((close - closes[index]) / closes[index]) * 100);
   const monthAgo = closes.at(-22) || closes[0] || latest;
-  const momentum = ((latest - monthAgo) / monthAgo) * 100;
+  const momentum = ((historyLatest - monthAgo) / monthAgo) * 100;
   const recentReturns = returns.slice(-30);
   const avg = recentReturns.reduce((sum, item) => sum + item, 0) / Math.max(recentReturns.length, 1);
   const variance =
@@ -200,6 +211,46 @@ function filteredRows() {
     });
 }
 
+function signalStats(rows = state.rows) {
+  if (!rows.length) {
+    return {
+      minMomentum: -10,
+      maxMomentum: 10,
+      minVolatility: 0,
+      maxVolatility: 1,
+      medianVolatility: 0,
+    };
+  }
+  const momentums = rows.map((row) => row.momentum).filter(Number.isFinite);
+  const volatilities = rows.map((row) => row.volatility).filter(Number.isFinite).sort((a, b) => a - b);
+  const rawMinMomentum = Math.min(...momentums, -4);
+  const rawMaxMomentum = Math.max(...momentums, 4);
+  const momentumPad = Math.max((rawMaxMomentum - rawMinMomentum) * 0.18, 2);
+  return {
+    minMomentum: rawMinMomentum - momentumPad,
+    maxMomentum: rawMaxMomentum + momentumPad,
+    minVolatility: Math.min(...volatilities, 0),
+    maxVolatility: Math.max(...volatilities, 1),
+    medianVolatility: volatilities[Math.floor(volatilities.length / 2)] || 0,
+  };
+}
+
+function signalFor(row, stats = signalStats()) {
+  const highRisk = row.volatility >= stats.medianVolatility;
+  const strong = row.momentum >= 4;
+  const weak = row.momentum <= -4;
+  const dayUp = row.changePct >= 0.05;
+  const dayDown = row.changePct <= -0.05;
+
+  if (strong && !highRisk && dayUp) return { label: 'Clean leader', tone: 'leader' };
+  if (strong && highRisk) return { label: 'Hot leader', tone: 'hot' };
+  if (weak && highRisk) return { label: 'Stress tape', tone: 'stress' };
+  if (weak) return { label: 'Fading', tone: 'lag' };
+  if (highRisk && dayDown) return { label: 'Risk watch', tone: 'watch' };
+  if (dayUp) return { label: 'Accumulating', tone: 'base' };
+  return { label: 'Base build', tone: 'neutral' };
+}
+
 function sparkline(history) {
   const values = history.map((point) => point.close).slice(-44);
   const min = Math.min(...values);
@@ -216,9 +267,11 @@ function sparkline(history) {
 
 function renderStockList() {
   const rows = filteredRows();
+  const stats = signalStats(state.rows);
   els.stockList.innerHTML = rows
     .map((row) => {
-      const note = state.notes[row.ticker]?.text ? 'Note' : row.group;
+      const signal = signalFor(row, stats);
+      const note = state.notes[row.ticker]?.text ? 'Note' : signal.label;
       const tone = row.changePct > 0.05 ? 'up' : row.changePct < -0.05 ? 'down' : 'flat';
       return `
         <button class="stock-row ${state.selected === row.ticker ? 'active' : ''}" type="button" data-ticker="${row.ticker}">
@@ -266,48 +319,61 @@ function renderMetrics() {
   els.riskDetail.textContent = `${avgVol.toFixed(1)} annualized vol`;
 }
 
-function drawSignalMap() {
-  const canvas = els.canvas;
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-  canvas.height = Math.max(360, Math.floor(rect.height * dpr));
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  const width = canvas.width / dpr;
-  const height = canvas.height / dpr;
-  const pad = 42;
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#fffdf7';
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = '#d8d5ca';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(pad, height / 2);
-  ctx.lineTo(width - pad, height / 2);
-  ctx.moveTo(width / 2, pad);
-  ctx.lineTo(width / 2, height - pad);
-  ctx.stroke();
+function renderSignalBoard() {
+  const rows = filteredRows();
+  if (!rows.length) {
+    els.signalBoard.innerHTML = '<p class="empty-state">No symbols match this filter.</p>';
+    return;
+  }
+  const stats = signalStats(state.rows);
+  const visibleStats = signalStats(rows);
+  const zeroPosition = clamp(scale(0, stats.minMomentum, stats.maxMomentum, 8, 92), 8, 92);
+  els.signalBoard.innerHTML = `
+    <div class="signal-axis" style="--zero:${zeroPosition}%">
+      <span>${pct(visibleStats.minMomentum)}</span>
+      <span>0</span>
+      <span>${pct(visibleStats.maxMomentum)}</span>
+    </div>
+    ${rows
+      .map((row) => {
+        const signal = signalFor(row, stats);
+        const momentumPosition = clamp(scale(row.momentum, stats.minMomentum, stats.maxMomentum, 8, 92), 8, 92);
+        const risk = clamp(scale(row.volatility, stats.minVolatility, stats.maxVolatility, 18, 100), 18, 100);
+        const tone = row.changePct > 0.05 ? 'up' : row.changePct < -0.05 ? 'down' : 'flat';
+        return `
+          <button
+            class="signal-lane ${state.selected === row.ticker ? 'active' : ''}"
+            type="button"
+            data-ticker="${row.ticker}"
+            data-tone="${signal.tone}"
+            style="--momentum:${momentumPosition}%; --risk:${risk}%; --zero:${zeroPosition}%"
+            title="${row.ticker}: ${pct(row.momentum)} 30d momentum, ${row.volatility.toFixed(1)} vol"
+          >
+            <span class="lane-id">
+              <strong>${row.ticker}</strong>
+              <small>${row.group}</small>
+            </span>
+            <span class="lane-rail">
+              <span class="lane-zero"></span>
+              <span class="lane-risk"></span>
+              <span class="lane-dot"></span>
+            </span>
+            <span class="lane-reading">
+              <strong class="${tone}">${pct(row.changePct)}</strong>
+              <small>${signal.label}</small>
+            </span>
+          </button>
+        `;
+      })
+      .join('')}
+  `;
 
-  ctx.fillStyle = '#706f68';
-  ctx.font = '12px Helvetica, Arial, sans-serif';
-  ctx.fillText('Lower vol', pad, height - 16);
-  ctx.fillText('Higher momentum', width - 138, pad - 12);
-
-  const rows = state.rows;
-  const maxMomentum = Math.max(...rows.map((row) => Math.abs(row.momentum)), 10);
-  const maxVol = Math.max(...rows.map((row) => row.volatility), 30);
-  rows.forEach((row) => {
-    const x = pad + ((row.momentum + maxMomentum) / (maxMomentum * 2)) * (width - pad * 2);
-    const y = height - pad - (row.volatility / maxVol) * (height - pad * 2);
-    const selected = row.ticker === state.selected;
-    ctx.beginPath();
-    ctx.arc(x, y, selected ? 11 : 7, 0, Math.PI * 2);
-    ctx.fillStyle = selected ? '#1b5cff' : row.changePct >= 0 ? '#138a4b' : '#c83f31';
-    ctx.fill();
-    ctx.fillStyle = '#11110f';
-    ctx.font = `${selected ? 800 : 700} 12px Helvetica, Arial, sans-serif`;
-    ctx.fillText(row.ticker, x + 12, y + 4);
+  els.signalBoard.querySelectorAll('.signal-lane').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selected = button.dataset.ticker;
+      syncNoteFields();
+      render();
+    });
   });
 }
 
@@ -315,12 +381,23 @@ function renderSelected() {
   const row = state.rows.find((item) => item.ticker === state.selected) || state.rows[0];
   if (!row) return;
   const note = state.notes[row.ticker];
+  const stats = signalStats();
+  const signal = signalFor(row, stats);
+  const momentumWidth = clamp(scale(row.momentum, stats.minMomentum, stats.maxMomentum, 8, 100), 8, 100);
+  const riskWidth = clamp(scale(row.volatility, stats.minVolatility, stats.maxVolatility, 8, 100), 8, 100);
+  const dayWidth = clamp(scale(Math.abs(row.changePct), 0, 6, 8, 100), 8, 100);
   els.selectedStock.innerHTML = `
     <strong>${row.ticker} <span class="${row.changePct >= 0 ? 'up' : 'down'}">${pct(row.changePct)}</span></strong>
+    <p class="signal-verdict">${signal.label}: ${row.role}</p>
     <div class="selected-grid">
       <div><span>Price</span><br>${money(row.close)}</div>
       <div><span>30d mom.</span><br>${pct(row.momentum)}</div>
       <div><span>Vol.</span><br>${row.volatility.toFixed(1)}</div>
+    </div>
+    <div class="signal-bars" aria-label="${row.ticker} signal bars">
+      <span><em>Day</em><i class="${row.changePct >= 0 ? 'bar-up' : 'bar-down'}" style="width:${dayWidth}%"></i></span>
+      <span><em>Momentum</em><i class="bar-blue" style="width:${momentumWidth}%"></i></span>
+      <span><em>Risk</em><i class="bar-risk" style="width:${riskWidth}%"></i></span>
     </div>
     ${note?.alert ? `<p class="quiet">Alert level: ${money(Number(note.alert))}</p>` : ''}
   `;
@@ -347,6 +424,40 @@ function renderPulse() {
     .join('');
   const last = returns.at(-1) || 0;
   els.pulseSummary.textContent = `Last equal-weight day ${pct(last)}`;
+  renderGroupPulse();
+}
+
+function renderGroupPulse() {
+  const groups = [...new Set(STOCKS.map((stock) => stock.group))];
+  const stats = signalStats();
+  els.groupPulse.innerHTML = groups
+    .map((group) => {
+      const rows = state.rows.filter((row) => row.group === group);
+      if (!rows.length) return '';
+      const day = rows.reduce((sum, row) => sum + row.changePct, 0) / rows.length;
+      const momentum = rows.reduce((sum, row) => sum + row.momentum, 0) / rows.length;
+      const volatility = rows.reduce((sum, row) => sum + row.volatility, 0) / rows.length;
+      const heat = clamp(scale(Math.abs(day), 0, 4, 12, 100), 12, 100);
+      const tone = day > 0.05 ? 'up' : day < -0.05 ? 'down' : 'flat';
+      return `
+        <button class="group-card" type="button" data-filter="${group}" style="--heat:${heat}%">
+          <span>${group}</span>
+          <strong class="${tone}">${pct(day)}</strong>
+          <small>${pct(momentum)} mom. / ${volatility.toFixed(1)} vol</small>
+        </button>
+      `;
+    })
+    .join('');
+
+  els.groupPulse.querySelectorAll('.group-card').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.filter = button.dataset.filter;
+      els.segmentFilters
+        .querySelectorAll('button')
+        .forEach((item) => item.classList.toggle('active', item.dataset.filter === state.filter));
+      render();
+    });
+  });
 }
 
 function syncNoteFields() {
@@ -375,7 +486,7 @@ function renderNotes() {
 function render() {
   renderMetrics();
   renderStockList();
-  drawSignalMap();
+  renderSignalBoard();
   renderSelected();
   renderPulse();
 }
@@ -404,7 +515,6 @@ els.noteTicker.addEventListener('change', (event) => {
 });
 els.noteText.addEventListener('input', saveNote);
 els.alertLevel.addEventListener('input', saveNote);
-window.addEventListener('resize', drawSignalMap);
 
 renderNotes();
 loadData();

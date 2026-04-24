@@ -75,11 +75,12 @@
         <aside class="panel signal-panel">
           <div class="panel-head">
             <div>
-              <p class="kicker">Signal map</p>
-              <h2>Momentum / risk</h2>
+              <p class="kicker">Signal board</p>
+              <h2>Silicon floorplan</h2>
             </div>
+            <span class="quiet">30d momentum rails</span>
           </div>
-          <canvas id="signalCanvas" width="720" height="520" aria-label="Momentum and volatility scatter plot"></canvas>
+          <div id="signalBoard" class="signal-board" aria-label="Momentum and volatility signal lanes"></div>
           <div id="selectedStock" class="selected-stock"></div>
         </aside>
       </section>
@@ -93,6 +94,7 @@
           <span id="pulseSummary" class="quiet">Waiting for history</span>
         </div>
         <div id="pulseStrip" class="pulse-strip" aria-label="Recent equal-weight daily return strip"></div>
+        <div id="groupPulse" class="group-pulse" aria-label="Segment pulse summary"></div>
       </section>
 
       <section class="panel notes-panel">
